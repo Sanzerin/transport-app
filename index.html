@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ТрансЛогистик — Система управления перевозками</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚛</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif; background: #F1F5F9; overflow-x: hidden; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+        input:focus, select:focus, textarea:focus { border-color: #2563EB !important; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        button { font-family: inherit; }
+        textarea { font-family: inherit; resize: vertical; }
+        select { font-family: inherit; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        .slide-up { animation: slideUp 0.5s ease-out forwards; }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: fadeIn 0.2s ease-out; }
+        .modal-content { background: #fff; border-radius: 20px; padding: 32px; max-width: 520px; width: 90%; max-height: 85vh; overflow-y: auto; animation: scaleIn 0.3s ease-out; box-shadow: 0 25px 60px rgba(0,0,0,0.2); }
+        .toast { position: fixed; bottom: 24px; right: 24px; padding: 14px 24px; border-radius: 12px; color: #fff; font-weight: 600; font-size: 14px; z-index: 2000; animation: slideUp 0.3s ease-out; box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+        .search-input { width: 100%; padding: 10px 14px 10px 38px; border-radius: 10px; border: 1.5px solid #E2E8F0; font-size: 14px; font-family: inherit; outline: none; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") 12px center no-repeat; }
+        .progress-bar { height: 6px; border-radius: 3px; background: #E2E8F0; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease-out; }
+        @media (max-width: 768px) { .hide-mobile { display: none !important; } .mobile-full { grid-template-columns: 1fr !important; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const LS = {
+  get: (k, fb) => { try { const v = localStorage.getItem("tl_" + k); return v ? JSON.parse(v) : fb; } catch { return fb; } },
+  set: (k, v) => { try { localStorage.setItem("tl_" + k, JSON.stringify(v)); } catch {} },
+};
+
+const INIT_ORDERS = [
+  { id: "TR-20260301", client: "ООО «Альфа»", from: "Москва, ул. Ленина 12", to: "Санкт-Петербург, Невский пр. 88", cargo: "Электроника", weight: 450, status: "delivered", price: 28500, date: "2026-03-01", driver: "Иванов А.С.", notes: "" },
+  { id: "TR-20260305", client: "ИП Петров", from: "Казань, ул. Баумана 5", to: "Москва, ул. Тверская 22", cargo: "Текстиль", weight: 1200, status: "in_transit", price: 45000, date: "2026-03-05", driver: "Сидоров В.К.", notes: "" },
+  { id: "TR-20260310", client: "ООО «Бета»", from: "Новосибирск, ул. Кирова 3", to: "Екатеринбург, ул. Мира 15", cargo: "Стройматериалы", weight: 3500, status: "in_transit", price: 62000, date: "2026-03-10", driver: "Козлов М.И.", notes: "" },
+  { id: "TR-20260315", client: "ЗАО «Гамма»", from: "Москва, МКАД 24 км", to: "Нижний Новгород, ул. Горького 44", cargo: "Продукты питания", weight: 800, status: "pending", price: 18500, date: "2026-03-15", driver: null, notes: "" },
+  { id: "TR-20260318", client: "ООО «Дельта»", from: "Ростов-на-Дону, пр. Будённовский 1", to: "Краснодар, ул. Красная 10", cargo: "Мебель", weight: 2100, status: "pending", price: 35000, date: "2026-03-18", driver: null, notes: "" },
+  { id: "TR-20260320", client: "ООО «Альфа»", from: "Москва, Варшавское ш. 33", to: "Тула, ул. Советская 7", cargo: "Запчасти", weight: 600, status: "loading", price: 12000, date: "2026-03-20", driver: "Иванов А.С.", notes: "" },
+];
+
+const INIT_VEHICLES = [
+  { id: "В001", plate: "А123БВ77", model: "MAN TGX 18.510", type: "Фура", capacity: 20000, status: "on_route", driver: "Иванов А.С.", mileage: 245000, fuel: 72 },
+  { id: "В002", plate: "К456ОР50", model: "Volvo FH16", type: "Фура", capacity: 25000, status: "on_route", driver: "Сидоров В.К.", mileage: 189000, fuel: 85 },
+  { id: "В003", plate: "М789СТ99", model: "Mercedes Actros", type: "Рефрижератор", capacity: 18000, status: "available", driver: null, mileage: 312000, fuel: 45 },
+  { id: "В004", plate: "Е012УХ77", model: "DAF XF", type: "Тент", capacity: 22000, status: "on_route", driver: "Козлов М.И.", mileage: 156000, fuel: 63 },
+  { id: "В005", plate: "Р345АК50", model: "Scania R500", type: "Фура", capacity: 24000, status: "maintenance", driver: null, mileage: 278000, fuel: 30 },
+];
+
+const INIT_DRIVERS = [
+  { id: "D01", name: "Иванов Алексей Сергеевич", short: "Иванов А.С.", phone: "+7 (901) 123-45-67", license: "CE", status: "on_route", vehicle: "А123БВ77", rating: 4.8, trips: 156 },
+  { id: "D02", name: "Сидоров Виктор Кириллович", short: "Сидоров В.К.", phone: "+7 (902) 234-56-78", license: "CE", status: "on_route", vehicle: "К456ОР50", rating: 4.6, trips: 132 },
+  { id: "D03", name: "Козлов Михаил Иванович", short: "Козлов М.И.", phone: "+7 (903) 345-67-89", license: "CE", status: "on_route", vehicle: "Е012УХ77", rating: 4.9, trips: 201 },
+  { id: "D04", name: "Новиков Дмитрий Павлович", short: "Новиков Д.П.", phone: "+7 (904) 456-78-90", license: "C", status: "available", vehicle: null, rating: 4.5, trips: 89 },
+  { id: "D05", name: "Морозов Андрей Николаевич", short: "Морозов А.Н.", phone: "+7 (905) 567-89-01", license: "CE", status: "off_duty", vehicle: null, rating: 4.7, trips: 178 },
+];
+
+const INIT_MSGS = [
+  { id: 1, from: "driver", text: "Загрузка завершена, выезжаю по маршруту", time: "09:15" },
+  { id: 2, from: "dispatcher", text: "Принято. На М7 ремонт дороги, объезд через Владимир", time: "09:20" },
+  { id: 3, from: "driver", text: "Понял, спасибо за информацию", time: "09:22" },
+  { id: 4, from: "dispatcher", text: "Ориентировочное время прибытия?", time: "10:45" },
+  { id: 5, from: "driver", text: "Примерно к 16:00, пробок пока нет", time: "10:48" },
+];
+
+const TARIFFS = [
+  { name: "Стандарт", pricePerKm: 45, minPrice: 5000, desc: "Обычные грузы до 5 тонн", icon: "📦" },
+  { name: "Тяжеловес", pricePerKm: 72, minPrice: 12000, desc: "Грузы от 5 до 20 тонн", icon: "🏗️" },
+  { name: "Рефрижератор", pricePerKm: 85, minPrice: 15000, desc: "Температурный режим", icon: "❄️" },
+  { name: "Экспресс", pricePerKm: 95, minPrice: 8000, desc: "Срочная доставка", icon: "⚡" },
+];
+
+const STATUS_MAP = {
+  pending: { label: "Ожидает", color: "#F59E0B", bg: "#FEF3C7" },
+  loading: { label: "Загрузка", color: "#8B5CF6", bg: "#EDE9FE" },
+  in_transit: { label: "В пути", color: "#3B82F6", bg: "#DBEAFE" },
+  delivered: { label: "Доставлен", color: "#10B981", bg: "#D1FAE5" },
+  cancelled: { label: "Отменён", color: "#EF4444", bg: "#FEE2E2" },
+  on_route: { label: "На маршруте", color: "#3B82F6", bg: "#DBEAFE" },
+  available: { label: "Свободен", color: "#10B981", bg: "#D1FAE5" },
+  maintenance: { label: "ТО", color: "#F59E0B", bg: "#FEF3C7" },
+  off_duty: { label: "Выходной", color: "#6B7280", bg: "#F3F4F6" },
+};
+
+const Badge = ({ status }) => { const s = STATUS_MAP[status] || { label: status, color: "#6B7280", bg: "#F3F4F6" }; return React.createElement("span", { style: { display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, color: s.color, background: s.bg } }, s.label); };
+const fmtPrice = (n) => n?.toLocaleString("ru-RU") + " ₽";
+const genId = () => "TR-" + Date.now().toString().slice(-8);
+
+const Ic = ({ children, size = 20 }) => React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, children);
+const I = {
+  truck: React.createElement(Ic, null, React.createElement("path", { d: "M1 3h15v13H1z" }), React.createElement("path", { d: "M16 8h4l3 3v5h-7V8z" }), React.createElement("circle", { cx: 5.5, cy: 18.5, r: 2.5 }), React.createElement("circle", { cx: 18.5, cy: 18.5, r: 2.5 })),
+  pkg: React.createElement(Ic, null, React.createElement("path", { d: "M16.5 9.4l-9-5.19M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" }), React.createElement("path", { d: "M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" })),
+  users: React.createElement(Ic, null, React.createElement("path", { d: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" }), React.createElement("circle", { cx: 9, cy: 7, r: 4 }), React.createElement("path", { d: "M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" })),
+  chart: React.createElement(Ic, null, React.createElement("path", { d: "M18 20V10M12 20V4M6 20v-6" })),
+  map: React.createElement(Ic, null, React.createElement("path", { d: "M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z" }), React.createElement("path", { d: "M8 2v16M16 6v16" })),
+  gear: React.createElement(Ic, null, React.createElement("circle", { cx: 12, cy: 12, r: 3 }), React.createElement("path", { d: "M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" })),
+  bell: React.createElement(Ic, null, React.createElement("path", { d: "M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" })),
+  chat: React.createElement(Ic, null, React.createElement("path", { d: "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" })),
+  file: React.createElement(Ic, null, React.createElement("path", { d: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" }), React.createElement("path", { d: "M14 2v6h6M16 13H8M16 17H8M10 9H8" })),
+  calc: React.createElement(Ic, null, React.createElement("rect", { x: 4, y: 2, width: 16, height: 20, rx: 2 }), React.createElement("path", { d: "M8 6h8M8 10h8M8 14h4M8 18h4" })),
+  check: React.createElement(Ic, null, React.createElement("path", { d: "M20 6L9 17l-5-5" })),
+  cam: React.createElement(Ic, null, React.createElement("path", { d: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" }), React.createElement("circle", { cx: 12, cy: 13, r: 4 })),
+  nav: React.createElement(Ic, null, React.createElement("path", { d: "M3 11l19-9-9 19-2-8-8-2z" })),
+  star: React.createElement(Ic, null, React.createElement("polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" })),
+  dollar: React.createElement(Ic, null, React.createElement("line", { x1: 12, y1: 1, x2: 12, y2: 23 }), React.createElement("path", { d: "M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" })),
+  home: React.createElement(Ic, null, React.createElement("path", { d: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" }), React.createElement("path", { d: "M9 22V12h6v10" })),
+  x: React.createElement(Ic, null, React.createElement("line", { x1: 18, y1: 6, x2: 6, y2: 18 }), React.createElement("line", { x1: 6, y1: 6, x2: 18, y2: 18 })),
+  pen: React.createElement(Ic, null, React.createElement("path", { d: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" }), React.createElement("path", { d: "M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" })),
+  trash: React.createElement(Ic, null, React.createElement("path", { d: "M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" })),
+  dl: React.createElement(Ic, null, React.createElement("path", { d: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" })),
+  fuel: React.createElement(Ic, null, React.createElement("path", { d: "M3 22V5a2 2 0 012-2h8a2 2 0 012 2v17M3 22h12M15 10h2a2 2 0 012 2v2a2 2 0 002 2M7 8h4" })),
+};
+
+// Shared UI
+const Card = ({ children, style, onClick, hover }) => { const [h, setH] = useState(false); return React.createElement("div", { onClick, onMouseEnter: () => setH(true), onMouseLeave: () => setH(false), style: { background: "#fff", borderRadius: 14, padding: 20, boxShadow: h && hover ? "0 8px 32px rgba(0,0,0,0.12)" : "0 1px 4px rgba(0,0,0,0.06)", transition: "all 0.3s", transform: h && hover ? "translateY(-2px)" : "none", cursor: onClick ? "pointer" : "default", ...style } }, children); };
+const Metric = ({ icon, label, value, accent, sub }) => React.createElement(Card, { style: { flex: "1 1 180px", minWidth: 180 }, hover: true }, React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } }, React.createElement("div", { style: { width: 44, height: 44, borderRadius: 12, background: accent + "18", display: "flex", alignItems: "center", justifyContent: "center", color: accent, flexShrink: 0 } }, icon), React.createElement("div", null, React.createElement("div", { style: { fontSize: 13, color: "#8896A6", fontWeight: 500, marginBottom: 2 } }, label), React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: "#1A2332", letterSpacing: -0.5 } }, value), sub && React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 1 } }, sub))));
+const Btn = ({ children, onClick, v = "primary", style, disabled, title }) => { const s = { primary: { background: "linear-gradient(135deg, #2563EB, #1D4ED8)", color: "#fff", border: "none" }, secondary: { background: "#F1F5F9", color: "#475569", border: "1px solid #E2E8F0" }, danger: { background: "#FEE2E2", color: "#DC2626", border: "1px solid #FECACA" }, success: { background: "#D1FAE5", color: "#059669", border: "1px solid #A7F3D0" }, ghost: { background: "transparent", color: "#64748B", border: "none" } }; return React.createElement("button", { onClick, disabled, title, style: { padding: "10px 20px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", transition: "all 0.2s", opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 6, ...s[v], ...style } }, children); };
+const Inp = ({ label, ...p }) => React.createElement("div", null, label && React.createElement("label", { style: { display: "block", fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 6 } }, label), React.createElement("input", { ...p, style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E2E8F0", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", ...p.style } }));
+const Sel = ({ label, options, ...p }) => React.createElement("div", null, label && React.createElement("label", { style: { display: "block", fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 6 } }, label), React.createElement("select", { ...p, style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E2E8F0", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: "#fff", ...p.style } }, options.map((o, i) => React.createElement("option", { key: i, value: o.value }, o.label))));
+
+const Tbl = ({ columns, data, onRowClick }) => React.createElement("div", { style: { overflowX: "auto", borderRadius: 12, border: "1px solid #E8EDF2" } },
+  React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 14 } },
+    React.createElement("thead", null, React.createElement("tr", { style: { background: "#F8FAFC" } }, columns.map((c, i) => React.createElement("th", { key: i, style: { padding: "12px 16px", textAlign: "left", fontWeight: 600, color: "#64748B", borderBottom: "2px solid #E2E8F0", whiteSpace: "nowrap", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 } }, c.label)))),
+    React.createElement("tbody", null, data.length === 0 ? React.createElement("tr", null, React.createElement("td", { colSpan: columns.length, style: { padding: 40, textAlign: "center", color: "#94A3B8" } }, "Нет данных")) :
+      data.map((row, ri) => React.createElement("tr", { key: ri, onClick: () => onRowClick?.(row), style: { borderBottom: "1px solid #F1F5F9", cursor: onRowClick ? "pointer" : "default" }, onMouseEnter: e => { if (onRowClick) e.currentTarget.style.background = "#F8FAFC"; }, onMouseLeave: e => { e.currentTarget.style.background = ""; } },
+        columns.map((c, ci) => React.createElement("td", { key: ci, style: { padding: "12px 16px", color: "#334155", whiteSpace: "nowrap" } }, c.render ? c.render(row) : row[c.key])))))));
+
+const Tabs = ({ tabs, active, onChange }) => React.createElement("div", { style: { display: "flex", gap: 4, padding: 4, background: "#F1F5F9", borderRadius: 12, marginBottom: 24, flexWrap: "wrap" } },
+  tabs.map(t => React.createElement("button", { key: t.id, onClick: () => onChange(t.id), style: { flex: "1 1 auto", padding: "10px 14px", border: "none", borderRadius: 10, background: active === t.id ? "#fff" : "transparent", color: active === t.id ? "#1A2332" : "#64748B", fontWeight: active === t.id ? 700 : 500, fontSize: 13, cursor: "pointer", transition: "all 0.2s", boxShadow: active === t.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 } }, t.icon, " ", t.label)));
+
+const Modal = ({ open, onClose, title, children }) => { if (!open) return null; return React.createElement("div", { className: "modal-overlay", onClick: e => { if (e.target === e.currentTarget) onClose(); } }, React.createElement("div", { className: "modal-content" }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 } }, React.createElement("h2", { style: { fontSize: 20, fontWeight: 700, color: "#1A2332" } }, title), React.createElement("button", { onClick: onClose, style: { background: "none", border: "none", cursor: "pointer", color: "#94A3B8", padding: 4 } }, I.x)), children)); };
+
+const Toast = ({ message, type, onClose }) => { useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []); const bg = { success: "#10B981", error: "#EF4444", info: "#3B82F6", warning: "#F59E0B" }; return React.createElement("div", { className: "toast", style: { background: bg[type] || bg.info } }, message); };
+
+// CLIENT
+const ClientCalc = ({ onGo }) => {
+  const [f, setF] = useState({ dist: 500, weight: 1000, tariff: 0 });
+  const t = TARIFFS[f.tariff]; const price = Math.max(t.minPrice, Math.round(f.dist * t.pricePerKm * (1 + f.weight / 20000)));
+  return React.createElement("div", null,
+    React.createElement("h3", { style: { fontSize: 18, fontWeight: 700, color: "#1A2332", marginBottom: 20 } }, "Калькулятор стоимости"),
+    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }, className: "mobile-full" },
+      React.createElement(Inp, { label: "Расстояние (км)", type: "number", value: f.dist, onChange: e => setF({ ...f, dist: Math.max(0, +e.target.value) }) }),
+      React.createElement(Inp, { label: "Вес груза (кг)", type: "number", value: f.weight, onChange: e => setF({ ...f, weight: Math.max(0, +e.target.value) }) })),
+    React.createElement("label", { style: { display: "block", fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 6, marginTop: 16 } }, "Тариф"),
+    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }, className: "mobile-full" },
+      TARIFFS.map((tr, i) => React.createElement("div", { key: i, onClick: () => setF({ ...f, tariff: i }), style: { padding: 14, borderRadius: 10, border: f.tariff === i ? "2px solid #2563EB" : "1.5px solid #E2E8F0", cursor: "pointer", background: f.tariff === i ? "#EFF6FF" : "#fff", transition: "all 0.2s" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, React.createElement("span", { style: { fontSize: 18 } }, tr.icon), React.createElement("span", { style: { fontWeight: 700, fontSize: 14, color: f.tariff === i ? "#2563EB" : "#334155" } }, tr.name)),
+        React.createElement("div", { style: { fontSize: 12, color: "#94A3B8", marginTop: 4 } }, tr.desc),
+        React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 4, fontWeight: 600 } }, tr.pricePerKm + " ₽/км")))),
+    React.createElement("div", { style: { marginTop: 24, padding: 20, background: "linear-gradient(135deg, #1E40AF, #2563EB)", borderRadius: 14, color: "#fff", textAlign: "center" } },
+      React.createElement("div", { style: { fontSize: 14, opacity: 0.8, marginBottom: 4 } }, "Ориентировочная стоимость"),
+      React.createElement("div", { style: { fontSize: 36, fontWeight: 800, letterSpacing: -1 } }, fmtPrice(price)),
+      React.createElement("div", { style: { fontSize: 12, opacity: 0.6, marginTop: 4 } }, f.dist + " км • " + f.weight + " кг • " + t.name)),
+    React.createElement(Btn, { onClick: () => onGo?.(price, t.name), style: { marginTop: 16, width: "100%", justifyContent: "center" } }, "Оформить заявку →"));
+};
+
+const ClientNew = ({ onSubmit }) => {
+  const [f, setF] = useState({ from: "", to: "", cargo: "", weight: "", phone: "", notes: "" });
+  const [done, setDone] = useState(false); const [err, setErr] = useState({});
+  const validate = () => { const e = {}; if (!f.from.trim()) e.from = 1; if (!f.to.trim()) e.to = 1; if (!f.cargo.trim()) e.cargo = 1; if (!f.weight || f.weight <= 0) e.weight = 1; if (!f.phone.trim()) e.phone = 1; setErr(e); return !Object.keys(e).length; };
+  const go = () => { if (!validate()) return; onSubmit({ id: genId(), client: "ООО «Альфа»", from: f.from, to: f.to, cargo: f.cargo, weight: +f.weight, status: "pending", price: Math.round(Math.random() * 40000 + 10000), date: new Date().toISOString().slice(0, 10), driver: null, notes: f.notes }); setDone(true); };
+  if (done) return React.createElement("div", { style: { textAlign: "center", padding: 40 }, className: "fade-in" }, React.createElement("div", { style: { width: 64, height: 64, borderRadius: 32, background: "#D1FAE5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#059669" } }, I.check), React.createElement("h3", { style: { fontSize: 20, fontWeight: 700, color: "#1A2332" } }, "Заявка отправлена!"), React.createElement("p", { style: { color: "#64748B", marginTop: 8 } }, "Менеджер свяжется с вами в ближайшее время."), React.createElement(Btn, { onClick: () => { setDone(false); setF({ from: "", to: "", cargo: "", weight: "", phone: "", notes: "" }); }, style: { marginTop: 16 } }, "Новая заявка"));
+  return React.createElement("div", null,
+    React.createElement("h3", { style: { fontSize: 18, fontWeight: 700, color: "#1A2332", marginBottom: 20 } }, "Оформление заявки"),
+    React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+      React.createElement(Inp, { label: "Откуда *", placeholder: "Город, адрес", value: f.from, onChange: e => setF({ ...f, from: e.target.value }), style: { borderColor: err.from ? "#EF4444" : undefined } }),
+      React.createElement(Inp, { label: "Куда *", placeholder: "Город, адрес", value: f.to, onChange: e => setF({ ...f, to: e.target.value }), style: { borderColor: err.to ? "#EF4444" : undefined } }),
+      React.createElement(Inp, { label: "Описание груза *", placeholder: "Тип, особенности", value: f.cargo, onChange: e => setF({ ...f, cargo: e.target.value }), style: { borderColor: err.cargo ? "#EF4444" : undefined } }),
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }, className: "mobile-full" },
+        React.createElement(Inp, { label: "Вес (кг) *", type: "number", value: f.weight, onChange: e => setF({ ...f, weight: e.target.value }), style: { borderColor: err.weight ? "#EF4444" : undefined } }),
+        React.createElement(Inp, { label: "Телефон *", placeholder: "+7...", value: f.phone, onChange: e => setF({ ...f, phone: e.target.value }), style: { borderColor: err.phone ? "#EF4444" : undefined } })),
+      React.createElement("div", null, React.createElement("label", { style: { display: "block", fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 6 } }, "Примечания"), React.createElement("textarea", { value: f.notes, onChange: e => setF({ ...f, notes: e.target.value }), rows: 3, placeholder: "Дополнительно...", style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E2E8F0", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" } })),
+      Object.keys(err).length > 0 && React.createElement("div", { style: { color: "#EF4444", fontSize: 13 } }, "Заполните обязательные поля"),
+      React.createElement(Btn, { onClick: go, style: { marginTop: 8, width: "100%", justifyContent: "center" } }, "Отправить заявку")));
+};
+
+const ClientMod = ({ orders, setOrders, notif }) => {
+  const [tab, setTab] = useState("orders"); const [search, setSearch] = useState(""); const [sf, setSf] = useState("all"); const [detail, setDetail] = useState(null);
+  const my = orders.filter(o => o.client === "ООО «Альфа»");
+  const filtered = my.filter(o => { const ms = !search || [o.id, o.cargo, o.from, o.to].some(x => x.toLowerCase().includes(search.toLowerCase())); const mf = sf === "all" || o.status === sf; return ms && mf; });
+  return React.createElement("div", { className: "fade-in" },
+    React.createElement(Tabs, { active: tab, onChange: setTab, tabs: [{ id: "orders", label: "Мои заказы", icon: I.pkg }, { id: "calc", label: "Калькулятор", icon: I.calc }, { id: "new", label: "Новая заявка", icon: I.pen }, { id: "notifs", label: "Уведомления", icon: I.bell }] }),
+    React.createElement(Modal, { open: !!detail, onClose: () => setDetail(null), title: "Заказ " + detail?.id },
+      detail && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+        [{ l: "Статус", v: React.createElement(Badge, { status: detail.status }) }, { l: "Откуда", v: detail.from }, { l: "Куда", v: detail.to }, { l: "Груз", v: detail.cargo }, { l: "Вес", v: detail.weight + " кг" }, { l: "Стоимость", v: fmtPrice(detail.price) }, { l: "Дата", v: detail.date }, { l: "Водитель", v: detail.driver || "Не назначен" }, detail.notes ? { l: "Примечания", v: detail.notes } : null].filter(Boolean).map((r, i) => React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F1F5F9" } }, React.createElement("span", { style: { color: "#94A3B8", fontSize: 14 } }, r.l), React.createElement("span", { style: { fontWeight: 600, color: "#334155", fontSize: 14, textAlign: "right" } }, r.v))),
+        React.createElement("div", { style: { marginTop: 8, fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 8 } }, "Прогресс"),
+        React.createElement("div", { style: { display: "flex", gap: 4 } }, ["pending", "loading", "in_transit", "delivered"].map((st, i) => { const cur = ["pending", "loading", "in_transit", "delivered"].indexOf(detail.status); return React.createElement("div", { key: i, style: { flex: 1, height: 6, borderRadius: 3, background: i <= cur ? "#2563EB" : "#E2E8F0" } }); })),
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 4 } }, ["Создан", "Загрузка", "В пути", "Доставлен"].map((l, i) => React.createElement("span", { key: i, style: { fontSize: 10, color: "#94A3B8" } }, l))))),
+    tab === "orders" && React.createElement("div", null,
+      React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 } }, React.createElement(Metric, { icon: I.pkg, label: "Всего заказов", value: my.length, accent: "#2563EB" }), React.createElement(Metric, { icon: I.truck, label: "В пути", value: my.filter(o => o.status === "in_transit").length, accent: "#F59E0B" }), React.createElement(Metric, { icon: I.check, label: "Доставлено", value: my.filter(o => o.status === "delivered").length, accent: "#10B981" }), React.createElement(Metric, { icon: I.dollar, label: "Итого", value: fmtPrice(my.reduce((s, o) => s + o.price, 0)), accent: "#8B5CF6" })),
+      React.createElement("div", { style: { display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" } }, React.createElement("div", { style: { flex: "1 1 250px" } }, React.createElement("input", { className: "search-input", placeholder: "Поиск...", value: search, onChange: e => setSearch(e.target.value) })), React.createElement(Sel, { value: sf, onChange: e => setSf(e.target.value), options: [{ value: "all", label: "Все статусы" }, { value: "pending", label: "Ожидает" }, { value: "in_transit", label: "В пути" }, { value: "delivered", label: "Доставлен" }], style: { width: "auto", minWidth: 150 } })),
+      React.createElement(Tbl, { onRowClick: setDetail, columns: [{ label: "Номер", render: r => React.createElement("span", { style: { fontWeight: 700, color: "#2563EB" } }, r.id) }, { label: "Маршрут", render: r => React.createElement("span", { style: { fontSize: 13 } }, r.from.split(",")[0] + " → " + r.to.split(",")[0]) }, { label: "Груз", key: "cargo" }, { label: "Статус", render: r => React.createElement(Badge, { status: r.status }) }, { label: "Стоимость", render: r => React.createElement("span", { style: { fontWeight: 600 } }, fmtPrice(r.price)) }], data: filtered })),
+    tab === "calc" && React.createElement(Card, null, React.createElement(ClientCalc, { onGo: () => setTab("new") })),
+    tab === "new" && React.createElement(Card, null, React.createElement(ClientNew, { onSubmit: o => { setOrders(p => [...p, o]); notif({ text: "Заявка " + o.id + " создана", time: "только что", type: "success" }); } })),
+    tab === "notifs" && React.createElement(Card, null, React.createElement("h3", { style: { fontSize: 18, fontWeight: 700, color: "#1A2332", marginBottom: 16 } }, "Уведомления"), React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, [{ text: "Заказ TR-20260305 прибывает в Москву", time: "5 мин назад", type: "info" }, { text: "Оплата по TR-20260301 получена", time: "1 час назад", type: "success" }, { text: "ТС Р345АК50 направлен на ТО", time: "3 часа назад", type: "warning" }].map((n, i) => { const c = { info: "#3B82F6", success: "#10B981", warning: "#F59E0B" }; return React.createElement("div", { key: i, className: "fade-in", style: { display: "flex", gap: 12, padding: "12px 16px", background: c[n.type] + "08", borderRadius: 10, borderLeft: "3px solid " + c[n.type], animationDelay: (i * 0.05) + "s" } }, React.createElement("div", { style: { width: 8, height: 8, borderRadius: 4, background: c[n.type], marginTop: 5 } }), React.createElement("div", null, React.createElement("div", { style: { fontSize: 14, color: "#334155", fontWeight: 500 } }, n.text), React.createElement("div", { style: { fontSize: 12, color: "#94A3B8", marginTop: 2 } }, n.time))); }))));
+};
+
+// ADMIN
+const AdminMod = ({ orders, setOrders, vehicles, drivers, notif }) => {
+  const [tab, setTab] = useState("dash"); const [edit, setEdit] = useState(null); const [del, setDel] = useState(null); const [search, setSearch] = useState(""); const [sf, setSf] = useState("all");
+  const totalRev = orders.reduce((s, o) => s + o.price, 0); const dlv = orders.filter(o => o.status === "delivered").length; const rate = orders.length ? Math.round(dlv / orders.length * 100) : 0;
+  const filtered = orders.filter(o => { const ms = !search || [o.id, o.client, o.cargo].some(x => x.toLowerCase().includes(search.toLowerCase())); return ms && (sf === "all" || o.status === sf); });
+  const updateOrd = (id, ch) => { setOrders(p => p.map(o => o.id === id ? { ...o, ...ch } : o)); notif({ text: "Заказ " + id + " обновлён", time: "только что", type: "info" }); };
+  const deleteOrd = (id) => { setOrders(p => p.filter(o => o.id !== id)); notif({ text: "Заказ " + id + " удалён", time: "только что", type: "warning" }); };
+  const [tariffs, setTariffs] = useState(TARIFFS); const [editTar, setEditTar] = useState(null);
+
+  return React.createElement("div", { className: "fade-in" },
+    React.createElement(Tabs, { active: tab, onChange: setTab, tabs: [{ id: "dash", label: "Обзор", icon: I.chart }, { id: "orders", label: "Заявки", icon: I.pkg }, { id: "vehicles", label: "Транспорт", icon: I.truck }, { id: "drivers", label: "Водители", icon: I.users }, { id: "tariffs", label: "Тарифы", icon: I.dollar }] }),
+    // Edit modal
+    React.createElement(Modal, { open: !!edit, onClose: () => setEdit(null), title: "Редактирование " + edit?.id },
+      edit && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+        React.createElement(Sel, { label: "Статус", value: edit.status, onChange: e => setEdit({ ...edit, status: e.target.value }), options: [{ value: "pending", label: "Ожидает" }, { value: "loading", label: "Загрузка" }, { value: "in_transit", label: "В пути" }, { value: "delivered", label: "Доставлен" }, { value: "cancelled", label: "Отменён" }] }),
+        React.createElement(Sel, { label: "Водитель", value: edit.driver || "", onChange: e => setEdit({ ...edit, driver: e.target.value || null }), options: [{ value: "", label: "— Не назначен —" }, ...drivers.map(d => ({ value: d.short, label: d.name + (d.status === "available" ? " ✓" : "") }))] }),
+        React.createElement(Inp, { label: "Стоимость (₽)", type: "number", value: edit.price, onChange: e => setEdit({ ...edit, price: +e.target.value }) }),
+        React.createElement("div", null, React.createElement("label", { style: { display: "block", fontSize: 13, fontWeight: 600, color: "#64748B", marginBottom: 6 } }, "Примечания"), React.createElement("textarea", { value: edit.notes || "", onChange: e => setEdit({ ...edit, notes: e.target.value }), rows: 3, style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E2E8F0", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" } })),
+        React.createElement(Btn, { onClick: () => { updateOrd(edit.id, edit); setEdit(null); }, style: { width: "100%", justifyContent: "center" } }, "Сохранить"))),
+    // Delete confirm
+    React.createElement(Modal, { open: !!del, onClose: () => setDel(null), title: "Удаление" },
+      React.createElement("p", { style: { color: "#64748B", fontSize: 14, marginBottom: 24 } }, "Удалить заказ " + del + "?"),
+      React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, React.createElement(Btn, { v: "secondary", onClick: () => setDel(null) }, "Отмена"), React.createElement(Btn, { v: "danger", onClick: () => { deleteOrd(del); setDel(null); } }, "Удалить"))),
+    // Tariff edit
+    React.createElement(Modal, { open: editTar !== null, onClose: () => setEditTar(null), title: "Редактирование тарифа" },
+      editTar !== null && tariffs[editTar] && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+        React.createElement(Inp, { label: "Название", value: tariffs[editTar].name, onChange: e => { const t = [...tariffs]; t[editTar] = { ...t[editTar], name: e.target.value }; setTariffs(t); } }),
+        React.createElement(Inp, { label: "₽/км", type: "number", value: tariffs[editTar].pricePerKm, onChange: e => { const t = [...tariffs]; t[editTar] = { ...t[editTar], pricePerKm: +e.target.value }; setTariffs(t); } }),
+        React.createElement(Inp, { label: "Мин. цена (₽)", type: "number", value: tariffs[editTar].minPrice, onChange: e => { const t = [...tariffs]; t[editTar] = { ...t[editTar], minPrice: +e.target.value }; setTariffs(t); } }),
+        React.createElement(Inp, { label: "Описание", value: tariffs[editTar].desc, onChange: e => { const t = [...tariffs]; t[editTar] = { ...t[editTar], desc: e.target.value }; setTariffs(t); } }),
+        React.createElement(Btn, { onClick: () => setEditTar(null), style: { width: "100%", justifyContent: "center" } }, "Сохранить"))),
+
+    tab === "dash" && React.createElement("div", null,
+      React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 24 } }, React.createElement(Metric, { icon: I.pkg, label: "Всего заявок", value: orders.length, accent: "#2563EB", sub: "+" + orders.filter(o => o.status === "pending").length + " ожидают" }), React.createElement(Metric, { icon: I.truck, label: "В пути", value: orders.filter(o => o.status === "in_transit").length, accent: "#F59E0B" }), React.createElement(Metric, { icon: I.dollar, label: "Выручка", value: fmtPrice(totalRev), accent: "#10B981" }), React.createElement(Metric, { icon: I.users, label: "Водители", value: drivers.filter(d => d.status === "on_route").length + "/" + drivers.length, accent: "#8B5CF6" })),
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 20 }, className: "mobile-full" },
+        React.createElement(Card, null, React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: "#1A2332", marginBottom: 16 } }, "Выручка за неделю"), React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 8, height: 120 } }, [65, 42, 78, 55, 90, 72, 85].map((v, i) => React.createElement("div", { key: i, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 } }, React.createElement("div", { style: { fontSize: 10, color: "#94A3B8" } }, Math.round(v * totalRev / 500 / 1000) + "к"), React.createElement("div", { style: { width: "100%", height: v * 1.1, background: "linear-gradient(180deg, #2563EB, #3B82F6)", borderRadius: 6, minHeight: 8 } }), React.createElement("span", { style: { fontSize: 11, color: "#94A3B8" } }, ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][i]))))),
+        React.createElement(Card, null, React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: "#1A2332", marginBottom: 16 } }, "Доставляемость"), React.createElement("div", { style: { position: "relative", width: 100, height: 100, margin: "0 auto" } }, React.createElement("svg", { width: 100, height: 100, viewBox: "0 0 36 36" }, React.createElement("path", { d: "M18 2.0845a15.9155 15.9155 0 010 31.831 15.9155 15.9155 0 010-31.831", fill: "none", stroke: "#E2E8F0", strokeWidth: 3 }), React.createElement("path", { d: "M18 2.0845a15.9155 15.9155 0 010 31.831 15.9155 15.9155 0 010-31.831", fill: "none", stroke: "#10B981", strokeWidth: 3, strokeDasharray: rate + ", 100", strokeLinecap: "round" })), React.createElement("div", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: "#1A2332" } }, rate + "%")), React.createElement("div", { style: { textAlign: "center", fontSize: 13, color: "#94A3B8", marginTop: 8 } }, dlv + " из " + orders.length))),
+      React.createElement(Tbl, { columns: [{ label: "№", render: r => React.createElement("span", { style: { fontWeight: 700, color: "#2563EB" } }, r.id) }, { label: "Клиент", key: "client" }, { label: "Маршрут", render: r => React.createElement("span", { style: { fontSize: 13 } }, r.from.split(",")[0] + " → " + r.to.split(",")[0]) }, { label: "Статус", render: r => React.createElement(Badge, { status: r.status }) }, { label: "Сумма", render: r => React.createElement("span", { style: { fontWeight: 600 } }, fmtPrice(r.price)) }], data: orders })),
+
+    tab === "orders" && React.createElement("div", null,
+      React.createElement("div", { style: { display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" } }, React.createElement("div", { style: { flex: "1 1 250px" } }, React.createElement("input", { className: "search-input", placeholder: "Поиск...", value: search, onChange: e => setSearch(e.target.value) })), React.createElement(Sel, { value: sf, onChange: e => setSf(e.target.value), options: [{ value: "all", label: "Все" }, { value: "pending", label: "Ожидает" }, { value: "loading", label: "Загрузка" }, { value: "in_transit", label: "В пути" }, { value: "delivered", label: "Доставлен" }, { value: "cancelled", label: "Отменён" }], style: { width: "auto", minWidth: 150 } })),
+      React.createElement("div", { style: { fontSize: 13, color: "#94A3B8", marginBottom: 12 } }, "Найдено: " + filtered.length),
+      React.createElement(Tbl, { columns: [{ label: "№", render: r => React.createElement("span", { style: { fontWeight: 700, color: "#2563EB" } }, r.id) }, { label: "Клиент", key: "client" }, { label: "Маршрут", render: r => React.createElement("span", { style: { fontSize: 13 } }, r.from.split(",")[0] + " → " + r.to.split(",")[0]) }, { label: "Статус", render: r => React.createElement(Badge, { status: r.status }) }, { label: "Водитель", render: r => r.driver || "—" }, { label: "Сумма", render: r => React.createElement("span", { style: { fontWeight: 600 } }, fmtPrice(r.price)) }, { label: "", render: r => React.createElement("div", { style: { display: "flex", gap: 4 } }, React.createElement(Btn, { v: "ghost", style: { padding: 6 }, onClick: e => { e.stopPropagation(); setEdit({ ...r }); } }, I.pen), React.createElement(Btn, { v: "ghost", style: { padding: 6, color: "#EF4444" }, onClick: e => { e.stopPropagation(); setDel(r.id); } }, I.trash)) }], data: filtered })),
+
+    tab === "vehicles" && React.createElement("div", null,
+      React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 } }, React.createElement(Metric, { icon: I.truck, label: "Всего ТС", value: vehicles.length, accent: "#2563EB" }), React.createElement(Metric, { icon: I.map, label: "На маршруте", value: vehicles.filter(v => v.status === "on_route").length, accent: "#10B981" }), React.createElement(Metric, { icon: I.gear, label: "На ТО", value: vehicles.filter(v => v.status === "maintenance").length, accent: "#F59E0B" })),
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 } },
+        vehicles.map(v => React.createElement(Card, { key: v.id, hover: true },
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, React.createElement("div", null, React.createElement("div", { style: { fontWeight: 700, fontSize: 16, color: "#1A2332" } }, v.model), React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 700, color: "#2563EB", fontSize: 14, marginTop: 2 } }, v.plate)), React.createElement(Badge, { status: v.status })),
+          React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 } }, React.createElement("div", null, React.createElement("span", { style: { color: "#94A3B8" } }, "Тип: "), v.type), React.createElement("div", null, React.createElement("span", { style: { color: "#94A3B8" } }, "Грузоп.: "), (v.capacity / 1000) + " т"), React.createElement("div", null, React.createElement("span", { style: { color: "#94A3B8" } }, "Пробег: "), (v.mileage / 1000).toFixed(0) + " тыс."), React.createElement("div", null, React.createElement("span", { style: { color: "#94A3B8" } }, "Водитель: "), v.driver || "—")),
+          React.createElement("div", { style: { marginTop: 12 } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 } }, React.createElement("span", { style: { color: "#94A3B8", display: "flex", alignItems: "center", gap: 4 } }, I.fuel, " Топливо"), React.createElement("span", { style: { fontWeight: 600, color: v.fuel < 40 ? "#EF4444" : "#334155" } }, v.fuel + "%")), React.createElement("div", { className: "progress-bar" }, React.createElement("div", { className: "progress-fill", style: { width: v.fuel + "%", background: v.fuel < 30 ? "#EF4444" : v.fuel < 60 ? "#F59E0B" : "#10B981" } }))))))),
+
+    tab === "drivers" && React.createElement(Tbl, { columns: [{ label: "ФИО", render: r => React.createElement("span", { style: { fontWeight: 600 } }, r.name) }, { label: "Телефон", key: "phone" }, { label: "Кат.", key: "license" }, { label: "Рейсов", render: r => r.trips }, { label: "Рейтинг", render: r => React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 } }, React.createElement("span", { style: { color: "#F59E0B" } }, I.star), r.rating) }, { label: "Статус", render: r => React.createElement(Badge, { status: r.status }) }, { label: "Авто", render: r => r.vehicle ? React.createElement("span", { style: { fontFamily: "monospace", fontWeight: 600 } }, r.vehicle) : "—" }], data: drivers }),
+
+    tab === "tariffs" && React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 } },
+      tariffs.map((t, i) => React.createElement(Card, { key: i, hover: true }, React.createElement("div", { style: { fontSize: 24, marginBottom: 4 } }, t.icon), React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "#1A2332", marginBottom: 4 } }, t.name), React.createElement("div", { style: { fontSize: 13, color: "#94A3B8", marginBottom: 16 } }, t.desc), React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid #F1F5F9" } }, React.createElement("div", null, React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: "#2563EB" } }, t.pricePerKm, React.createElement("span", { style: { fontSize: 14, fontWeight: 500 } }, " ₽/км")), React.createElement("div", { style: { fontSize: 12, color: "#94A3B8" } }, "Мин. " + fmtPrice(t.minPrice))), React.createElement(Btn, { v: "secondary", style: { padding: "6px 14px", fontSize: 12 }, onClick: () => setEditTar(i) }, "Изменить"))))));
+};
+
+// DRIVER
+const DrvChat = () => {
+  const [msgs, setMsgs] = useState(INIT_MSGS); const [inp, setInp] = useState(""); const btm = useRef(null);
+  useEffect(() => { btm.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  const send = () => { if (!inp.trim()) return; setMsgs(p => [...p, { id: p.length + 1, from: "driver", text: inp, time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) }]); setInp(""); setTimeout(() => { const r = ["Принято!", "Хорошо, учтём.", "ОК, информация принята.", "Понял, ожидайте.", "Спасибо за информацию."]; setMsgs(p => [...p, { id: p.length + 1, from: "dispatcher", text: r[Math.floor(Math.random() * r.length)], time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) }]); }, 1200); };
+  return React.createElement(Card, { style: { display: "flex", flexDirection: "column", height: 420 } },
+    React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: "#1A2332", marginBottom: 12, flexShrink: 0 } }, "Чат с диспетчером"),
+    React.createElement("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } }, msgs.map(m => React.createElement("div", { key: m.id, className: "fade-in", style: { alignSelf: m.from === "driver" ? "flex-end" : "flex-start", maxWidth: "75%", padding: "10px 14px", borderRadius: 14, background: m.from === "driver" ? "#2563EB" : "#F1F5F9", color: m.from === "driver" ? "#fff" : "#334155", fontSize: 14 } }, React.createElement("div", null, m.text), React.createElement("div", { style: { fontSize: 11, opacity: 0.6, marginTop: 3, textAlign: "right" } }, m.time))), React.createElement("div", { ref: btm })),
+    React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, React.createElement("input", { value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => e.key === "Enter" && send(), placeholder: "Сообщение...", style: { flex: 1, padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E2E8F0", fontSize: 14, fontFamily: "inherit", outline: "none" } }), React.createElement(Btn, { onClick: send }, "→")));
+};
+
+const DrvMod = ({ orders, setOrders, notif }) => {
+  const [tab, setTab] = useState("orders"); const my = orders.filter(o => o.driver === "Иванов А.С."); const [conf, setConf] = useState({}); const [dlv, setDlv] = useState({}); const [signed, setSigned] = useState(false);
+  const accept = id => { setConf(p => ({ ...p, [id]: true })); setOrders(p => p.map(o => o.id === id ? { ...o, status: "in_transit" } : o)); notif({ text: "Задание " + id + " принято", time: "только что", type: "success" }); };
+  const deliver = id => { setDlv(p => ({ ...p, [id]: true })); setOrders(p => p.map(o => o.id === id ? { ...o, status: "delivered" } : o)); notif({ text: "Заказ " + id + " доставлен!", time: "только что", type: "success" }); };
+
+  return React.createElement("div", { className: "fade-in" },
+    React.createElement(Tabs, { active: tab, onChange: setTab, tabs: [{ id: "orders", label: "Задания", icon: I.pkg }, { id: "chat", label: "Чат", icon: I.chat }, { id: "waybill", label: "Путевой лист", icon: I.file }, { id: "nav", label: "Навигация", icon: I.nav }] }),
+
+    tab === "orders" && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+      my.length === 0 && React.createElement(Card, null, React.createElement("div", { style: { textAlign: "center", padding: 30, color: "#94A3B8" } }, "Нет активных заданий")),
+      my.map(o => React.createElement(Card, { key: o.id, hover: true },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, React.createElement("span", { style: { fontWeight: 700, color: "#2563EB", fontSize: 16 } }, o.id), React.createElement(Badge, { status: o.status })),
+        React.createElement("div", { style: { fontSize: 14, color: "#334155", marginBottom: 6 } }, React.createElement("strong", null, o.from.split(",")[0]), " → ", React.createElement("strong", null, o.to.split(",")[0])),
+        React.createElement("div", { style: { fontSize: 13, color: "#94A3B8", marginBottom: 4 } }, "Груз: " + o.cargo + ", " + o.weight + " кг • " + fmtPrice(o.price)),
+        React.createElement("div", { style: { fontSize: 13, color: "#94A3B8", marginBottom: 12 } }, "Дата: " + o.date),
+        React.createElement("div", { style: { display: "flex", gap: 8 } },
+          o.status === "delivered" ? React.createElement("span", { style: { color: "#10B981", fontWeight: 600, fontSize: 14, padding: "8px 0" } }, "✓ Доставлено") :
+          !conf[o.id] ? React.createElement(Btn, { onClick: () => accept(o.id), style: { flex: 1, justifyContent: "center" } }, "Принять задание") :
+          React.createElement(React.Fragment, null, React.createElement(Btn, { v: "success", style: { flex: 1, justifyContent: "center" } }, I.cam, " Фото"), !dlv[o.id] ? React.createElement(Btn, { v: "secondary", style: { flex: 1, justifyContent: "center" }, onClick: () => deliver(o.id) }, "Доставлено") : React.createElement("span", { style: { color: "#10B981", fontWeight: 600, padding: "8px 16px" } }, "✓")))))),
+
+    tab === "chat" && React.createElement(DrvChat),
+
+    tab === "waybill" && React.createElement(Card, null,
+      React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: "#1A2332", marginBottom: 16 } }, "Электронный путевой лист"),
+      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+        [{ l: "Дата", v: "22.03.2026" }, { l: "Водитель", v: "Иванов А.С." }, { l: "Авто", v: "MAN TGX / А123БВ77" }, { l: "Маршрут", v: "Москва → Тула" }, { l: "Заказ", v: "TR-20260320" }, { l: "Груз", v: "Запчасти, 600 кг" }, { l: "Выезд", v: "08:00" }, { l: "Одометр", v: "245 012 км" }, signed ? { l: "Подписан", v: "✓ " + new Date().toLocaleTimeString("ru") } : null].filter(Boolean).map((r, i) => React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F1F5F9" } }, React.createElement("span", { style: { color: "#94A3B8", fontSize: 14 } }, r.l), React.createElement("span", { style: { fontWeight: 600, color: r.l === "Подписан" ? "#059669" : "#334155", fontSize: 14 } }, r.v)))),
+      React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 20 } }, React.createElement(Btn, { v: signed ? "secondary" : "success", style: { flex: 1, justifyContent: "center" }, onClick: () => setSigned(true), disabled: signed }, signed ? "✓ Подписан" : "Подписать"), React.createElement(Btn, { v: "secondary", style: { flex: 1, justifyContent: "center" } }, I.dl, " PDF"))),
+
+    tab === "nav" && React.createElement(Card, null,
+      React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: "#1A2332", marginBottom: 12 } }, "Навигация"),
+      React.createElement("div", { style: { width: "100%", height: 300, borderRadius: 12, overflow: "hidden", background: "linear-gradient(135deg, #1E293B, #334155, #1E293B)", position: "relative" } },
+        React.createElement("svg", { width: "100%", height: "100%", viewBox: "0 0 400 300", style: { position: "absolute", top: 0, left: 0 } },
+          React.createElement("defs", null, React.createElement("linearGradient", { id: "rd", x1: 0, y1: 0, x2: 1, y2: 0 }, React.createElement("stop", { offset: "0%", stopColor: "#3B82F6", stopOpacity: 0.3 }), React.createElement("stop", { offset: "50%", stopColor: "#3B82F6", stopOpacity: 0.8 }), React.createElement("stop", { offset: "100%", stopColor: "#3B82F6", stopOpacity: 0.3 }))),
+          Array.from({ length: 15 }).map((_, i) => React.createElement("line", { key: "h" + i, x1: 0, y1: i * 20, x2: 400, y2: i * 20, stroke: "#475569", strokeWidth: 0.3, opacity: 0.4 })),
+          Array.from({ length: 16 }).map((_, i) => React.createElement("line", { key: "v" + i, x1: i * 25, y1: 0, x2: i * 25, y2: 300, stroke: "#475569", strokeWidth: 0.3, opacity: 0.4 })),
+          React.createElement("path", { d: "M50 250C100 200,150 100,200 150S300 50,350 80", fill: "none", stroke: "url(#rd)", strokeWidth: 4, strokeDasharray: "8 4" }, React.createElement("animate", { attributeName: "stroke-dashoffset", values: "0;-24", dur: "1.5s", repeatCount: "indefinite" })),
+          React.createElement("circle", { cx: 50, cy: 250, r: 8, fill: "#10B981" }), React.createElement("text", { x: 60, y: 272, fill: "#94A3B8", fontSize: 11 }, "Москва"),
+          React.createElement("circle", { cx: 350, cy: 80, r: 8, fill: "#EF4444" }), React.createElement("text", { x: 310, y: 72, fill: "#94A3B8", fontSize: 11 }, "Тула"),
+          React.createElement("circle", { cx: 200, cy: 150, r: 6, fill: "#3B82F6" }, React.createElement("animate", { attributeName: "r", values: "6;10;6", dur: "2s", repeatCount: "indefinite" })),
+          React.createElement("circle", { cx: 200, cy: 150, r: 14, fill: "none", stroke: "#3B82F6", strokeWidth: 1.5 }, React.createElement("animate", { attributeName: "r", values: "14;22;14", dur: "2s", repeatCount: "indefinite" }), React.createElement("animate", { attributeName: "opacity", values: "0.4;0;0.4", dur: "2s", repeatCount: "indefinite" })))),
+      React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 16 } }, [{ l: "Расстояние", v: "173 км" }, { l: "Время", v: "2ч 15м" }, { l: "Прибытие", v: "10:15" }].map((x, i) => React.createElement("div", { key: i, style: { flex: 1, padding: 12, background: "#F8FAFC", borderRadius: 10, textAlign: "center" } }, React.createElement("div", { style: { fontSize: 12, color: "#94A3B8" } }, x.l), React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: "#1A2332" } }, x.v))))));
+};
+
+// MAIN
+const MODS = [{ id: "client", label: "Клиент", icon: I.home, color: "#2563EB", desc: "Личный кабинет" }, { id: "admin", label: "Администратор", icon: I.chart, color: "#8B5CF6", desc: "Управление компанией" }, { id: "driver", label: "Водитель", icon: I.truck, color: "#10B981", desc: "Приложение водителя" }];
+
+function App() {
+  const [mod, setMod] = useState(LS.get("mod", null)); const [side, setSide] = useState(window.innerWidth > 768);
+  const [orders, setOrders] = useState(LS.get("orders", INIT_ORDERS));
+  const [vehicles] = useState(INIT_VEHICLES); const [drivers] = useState(INIT_DRIVERS);
+  const [toast, setToast] = useState(null); const [nCount, setNC] = useState(0);
+  useEffect(() => { LS.set("orders", orders); }, [orders]);
+  useEffect(() => { LS.set("mod", mod); }, [mod]);
+  const notif = n => { setNC(p => p + 1); setToast(n); };
+
+  if (!mod) return React.createElement("div", { style: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: "100vh", background: "linear-gradient(160deg, #0F172A, #1E293B 40%, #0F172A)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 } },
+    React.createElement("div", { style: { textAlign: "center", maxWidth: 800 } },
+      React.createElement("div", { style: { display: "inline-flex", alignItems: "center", gap: 12, marginBottom: 32 } },
+        React.createElement("div", { style: { width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg, #2563EB, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" } }, React.createElement("svg", { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M1 3h15v13H1z" }), React.createElement("path", { d: "M16 8h4l3 3v5h-7V8z" }), React.createElement("circle", { cx: 5.5, cy: 18.5, r: 2.5 }), React.createElement("circle", { cx: 18.5, cy: 18.5, r: 2.5 }))),
+        React.createElement("div", { style: { textAlign: "left" } }, React.createElement("div", { style: { fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: -1 } }, "ТрансЛогистик"), React.createElement("div", { style: { fontSize: 13, color: "#94A3B8", fontWeight: 500, letterSpacing: 2, textTransform: "uppercase" } }, "Система управления"))),
+      React.createElement("p", { style: { color: "#94A3B8", fontSize: 16, margin: "0 auto 40px", maxWidth: 500 } }, "Выберите модуль для демонстрации"),
+      React.createElement("div", { style: { display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap" } },
+        MODS.map((m, idx) => React.createElement("div", { key: m.id, onClick: () => setMod(m.id), className: "slide-up", style: { width: 220, padding: 32, borderRadius: 20, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", transition: "all 0.3s", animationDelay: (idx * 0.1) + "s", animationFillMode: "both" }, onMouseEnter: e => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.borderColor = m.color + "60"; }, onMouseLeave: e => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; } },
+          React.createElement("div", { style: { width: 52, height: 52, borderRadius: 14, background: m.color + "20", display: "flex", alignItems: "center", justifyContent: "center", color: m.color, margin: "0 auto 16px" } }, m.icon),
+          React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 6 } }, m.label),
+          React.createElement("div", { style: { fontSize: 13, color: "#94A3B8" } }, m.desc)))),
+      React.createElement("button", { onClick: () => { localStorage.clear(); setOrders(INIT_ORDERS); }, style: { marginTop: 40, background: "none", border: "none", color: "#64748B", fontSize: 12, cursor: "pointer", textDecoration: "underline" } }, "Сбросить все данные")));
+
+  const cur = MODS.find(m => m.id === mod);
+  return React.createElement("div", { style: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: "100vh", background: "#F1F5F9", display: "flex" } },
+    toast && React.createElement(Toast, { message: toast.text, type: toast.type, onClose: () => setToast(null) }),
+    React.createElement("div", { style: { width: side ? 240 : 60, minHeight: "100vh", background: "#0F172A", padding: side ? "20px 16px" : "20px 10px", display: "flex", flexDirection: "column", transition: "all 0.3s", flexShrink: 0, overflow: "hidden" } },
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 32, cursor: "pointer" }, onClick: () => setSide(!side) },
+        React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #2563EB, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", flexShrink: 0 } }, React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.5, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M1 3h15v13H1z" }), React.createElement("path", { d: "M16 8h4l3 3v5h-7V8z" }), React.createElement("circle", { cx: 5.5, cy: 18.5, r: 2.5 }), React.createElement("circle", { cx: 18.5, cy: 18.5, r: 2.5 }))),
+        side && React.createElement("span", { style: { color: "#fff", fontWeight: 700, fontSize: 16, whiteSpace: "nowrap" } }, "ТрансЛогистик")),
+      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, MODS.map(m => React.createElement("div", { key: m.id, onClick: () => setMod(m.id), style: { display: "flex", alignItems: "center", gap: 10, padding: side ? "10px 12px" : "10px", borderRadius: 10, cursor: "pointer", background: mod === m.id ? "rgba(255,255,255,0.1)" : "transparent", color: mod === m.id ? "#fff" : "#94A3B8", transition: "all 0.2s", justifyContent: side ? "flex-start" : "center" } }, React.createElement("span", { style: { color: mod === m.id ? m.color : "inherit", flexShrink: 0 } }, m.icon), side && React.createElement("span", { style: { fontWeight: mod === m.id ? 700 : 500, fontSize: 14, whiteSpace: "nowrap" } }, m.label)))),
+      React.createElement("div", { style: { marginTop: "auto" } }, React.createElement("div", { onClick: () => setMod(null), style: { display: "flex", alignItems: "center", gap: 10, padding: side ? "10px 12px" : "10px", borderRadius: 10, cursor: "pointer", color: "#94A3B8", justifyContent: side ? "flex-start" : "center" } }, I.x, side && React.createElement("span", { style: { fontSize: 14 } }, "На главную")))),
+    React.createElement("div", { style: { flex: 1, padding: 24, minWidth: 0, overflowY: "auto" } },
+      React.createElement("div", { style: { maxWidth: 1100, margin: "0 auto" } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 } },
+          React.createElement("div", null, React.createElement("h1", { style: { fontSize: 24, fontWeight: 800, color: "#1A2332", letterSpacing: -0.5, margin: 0 } }, cur?.label), React.createElement("p", { style: { color: "#94A3B8", fontSize: 14, margin: "4px 0 0" } }, cur?.desc)),
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+            React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748B", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", position: "relative" } }, I.bell, nCount > 0 && React.createElement("div", { style: { position: "absolute", top: -2, right: -2, width: 16, height: 16, borderRadius: 8, background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, nCount > 9 ? "9+" : nCount)),
+            React.createElement("div", { style: { width: 40, height: 40, borderRadius: 20, background: cur?.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 15 } }, cur?.label[0]))),
+        mod === "client" && React.createElement(ClientMod, { orders, setOrders, notif }),
+        mod === "admin" && React.createElement(AdminMod, { orders, setOrders, vehicles, drivers, notif }),
+        mod === "driver" && React.createElement(DrvMod, { orders, setOrders, notif }))));
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+    </script>
+</body>
+</html>
